@@ -1,0 +1,27 @@
+{
+  "Package": {
+    "Remarks": "Tunnel thruster.",
+    "Author": "TPN employee",
+    "Topology": {
+      "Visualization": {
+        "STL": "TT.stl",
+        "GLB": "TT.glb"
+      },
+      "Position": {
+        "x": 460,
+        "y": 0,
+        "z": 35
+      },
+      "UnitSymbol": "mm"
+    },
+    "AssetID": {
+      "LocalID": "/dnv_vis/443.1(mm)",
+      "ShortID": "TunnelThruster.json",
+      "NameObject": {
+        "NamingRule": "dnv_vis",
+        "vis:FunctionLeaf": "443.1 Manoeuvring thruster",
+        "vis:Component": "[C323] Manoeuvring thruster, tunnel"
+      }
+    }
+  }
+}

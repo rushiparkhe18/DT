@@ -1,0 +1,26 @@
+{
+  "Package": {
+    "Remarks": "Azimuth thruster starboard.",
+    "Author": "TPN employee",
+    "Topology": {
+      "Visualization": {
+        "GLB": "AZ.glb"
+      },
+      "Position": {
+        "x": -600,
+        "y": -60,
+        "z": 65
+      },
+      "UnitSymbol": "mm"
+    },
+    "AssetID": {
+      "LocalID": "/dnv_vis/433.1(mm)",
+      "ShortID": "AzimuthThrusterSB.json",
+      "NameObject": {
+        "NamingRule": "dnv_vis",
+        "vis:FunctionLeaf": "433.1 Propulsion thruster, starboard",
+        "vis:Component": "[C322] Propulsion thruster, azimuth"
+      }
+    }
+  }
+}

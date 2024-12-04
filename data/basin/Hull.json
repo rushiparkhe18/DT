@@ -1,0 +1,26 @@
+{
+  "Package": {
+    "Remarks": "High level description of the hull.",
+    "Author": "TPN employee",
+    "Topology": {
+      "Visualization": {
+        "STL": "Hull.stl",
+        "GLB": "Hull.glb"
+      },
+      "Position": {
+        "x": 0,
+        "y": 0,
+        "z": 0
+      },
+      "UnitSymbol": "mm"
+    },
+    "AssetID": {
+      "LocalID": "/dnv_vis/111(mm)",
+      "ShortID": "Hull.json",
+      "NameObject": {
+        "NamingRule": "dnv_vis",
+        "vis:FunctionComposition": "111 Ship hull structure"
+      }
+    }
+  }
+}

@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="utf-8">
+	<meta http-equiv="X-UA-Compatible" content="IE=edge">
+	<meta name="viewport" content="width=device-width, initial-scale=1">
+	<meta name="description" content="">
+	<meta name="author" content="">
+
+	<title>Digital Twin</title>
+	<link rel="icon" href="images/ntnu.ico">
+
+	<!-- Bootstrap Core CSS -->
+	<link href="libs/bootstrap.min.css" rel="stylesheet">
+	<!-- jQuery Version 1.11.1 -->
+	<script src="libs/jquery.js"></script>
+	<!-- Bootstrap Core JavaScript -->
+	<script src="libs/bootstrap.min.js"></script>
+	<!-- Three script -->
+	<script src="3D_engine/three.js"></script>
+	<script src="3D_engine/GLTFLoader.js"></script>
+	<script src="3D_engine/GLTFExporter.js"></script>
+	<!-- <script src="3D_engine/STLLoader.js"></script> -->
+	<script src="3D_engine/Mirror.js"></script>
+	<script src="3D_engine/WaterShader.js"></script>
+	<script src="3D_engine/OrbitControls.js"></script>
+	<script src="3D_engine/Patch_interpolation.js"></script>
+	<script src="3D_engine/Regular_ocean.js"></script>
+	<script src="libs/zingchart.min.js"></script>
+
+	<!-- OpenCV -->
+	<script src="libs/adapter-5.0.4.js"></script>
+	<script src="libs/utils.js"></script>
+</head>
+
+<body>
+	<!-- Navigation -->
+	
+
+	<!-- Container creates the space -->
+	<div class="container">
+		<!-- Row creates horizontal groups of columns -->
+		<div class="row">
+			<div class="col-md-12 text-center">
+				<h2>Digital Twin Aquarium</h2>
+				<p>Simple motion monitoring application based on open standards.</p>
+				
+			</div>
+
+			<div>
+				<div class="control">
+					<label for="appMode">Choose an app mode:</label>
+					<select name="appMode" id="appMode" autocomplete="off">
+						<option value="demo">Demo</option>
+						
+					</select>
+					<p></p>
+					<button id="startAndStop" disabled>Start</button>
+					
+				</div>
+			</div>
+
+			<p class="err" id="errorMessage"></p>
+
+			<div class="row">
+				<div class="col-sm-6">
+					<canvas id="canvasOutput" style="width:100%;height:360"></canvas>
+					<table style="width:100%">
+						<tr>
+							<th>Calibration</th>
+							<th>Resolution</th>
+							<th>Distance</th>
+							<th>Threshold</th>
+						</tr>
+						<tr>
+							<td>Horizontal</td>
+							<td id="resHori">640 px</td>
+							<td id="distHori">291 mm<m/td>
+							<td id="thresHori"></td>
+						</tr>
+						<tr>
+							<td>Vertical</td>
+							<td id="resVert">480 px</td>
+							<td id="distVert">218 mm</td>
+							<td id="thresVert"></td>
+						</tr>
+						<tr>
+							<td>Rotational</td>
+							<td></td>
+							<td></td>
+							<td id="thresRot"></td>
+						</tr>
+					</table>
+					<div id="warning" style="color:red;"></div>
+				</div>
+				<div class="col-sm-6">
+					<div id="3d" style="width:100%;height:450px"></div>
+					<div id="plotBoatMov1" style="position:relative; float:left; width:100%; height:150px"></div>
+					<div id="plotBoatMov2" style="position:relative; float:left; width:100%; height:150px"></div>
+				</div>
+			</div>
+			<video id="videoInput" src="data/aquarium/demo.mp4" width=640 height=480 muted loop></video>
+		</div>
+	</div>
+
+	<script>
+		"use strict";
+		var vis, xCenter, zCenter, rotDeg;
+		var renderer, container, scene, camera, controls;
+		var zUpCont, ocean;
+		var cg, draft;
+		var boat3D = new THREE.Group();
+
+		// insert global variable of the exported file @ferrari212
+		var demoObject = {};
+		let TimeStamp = new Date().toISOString();
+		demoObject.TimeSeriesData = []
+		demoObject.TimeSeriesData[0] = {
+			"DataConfigurationReference": {
+				"ID": "MotionTrackingChannel.json",
+				"TimeStamp": TimeStamp
+			},
+			"TabularData": [{
+				"NumberOfDataSet": "",
+				"NumberOfDataChannel": "3",
+				"DataChannelID": ["PosX", "PosZ", "RotY"],
+				"DataSet": []
+			}]
+		};
+
+		// download coordinate positions read by the app
+		var TabularData = demoObject.TimeSeriesData[0].TabularData[0];
+		function downloadFile() {
+			//Get the file contents
+			var file = new File([], "log.json");
+			// Finish boat object
+			TabularData.NumberOfDataSet = TabularData.DataSet.length.toString();
+			var str = JSON.stringify(demoObject);
+			//Save the file contents as a DataURI
+			var dataUri = "data:application/json;charset=utf-8," + encodeURIComponent(str);
+			//Write it as the href for the link
+			var link = document.getElementById("download").href = dataUri;
+		}
+
+		var resolution = {
+			w: parseFloat(document.getElementById("resHori").innerHTML),
+			h: parseFloat(document.getElementById("resVert").innerHTML)
+		};
+		var distance = {
+			w: parseFloat(document.getElementById("distHori").innerHTML),
+			h: parseFloat(document.getElementById("distVert").innerHTML)
+		};
+
+		// import digital twin JSON schema
+		var dataChannels, demoData, readFind;
+		var threshold = {};
+		new THREE.FileLoader().load("data/aquarium/VIS.json", useSchema);
+		function useSchema(contents) {
+			vis = JSON.parse(contents).VIS;
+
+			var specPath = "data/aquarium/" + vis["000"].Children["070"].Children["071"].Path.Asset;
+			new THREE.FileLoader().load(specPath, function (contents) {
+				var spec = JSON.parse(contents);
+				// get boat dimensions from specification
+				cg = spec.Package.CG.XCG;
+				draft = spec.Package.MainDimensions.DesignDraft;
+				// search through asset representation importing glTF files
+				for (let prop in vis) {
+					search3D(vis[prop]);
+				}
+				scene.add(boat3D);
+			});
+
+			// import data channel
+			var channelPath = "data/aquarium/" + vis["400"].Children["450"].Children["452"].Path.MeasuredStates[0].DataChannel;
+			new THREE.FileLoader().load(channelPath, function (contents) {
+				dataChannels = JSON.parse(contents);
+				// fill threshold object and table
+				threshold.w = 1000 * dataChannels.Package.DataChannelList.DataChannel[0].Property.Range.High;
+				threshold.h = 1000 * dataChannels.Package.DataChannelList.DataChannel[1].Property.Range.High;
+				threshold.r = 180 / Math.PI * dataChannels.Package.DataChannelList.DataChannel["2"].Property.Range.High;
+				document.getElementById("thresHori").innerHTML = threshold.w + " mm";
+				document.getElementById("thresVert").innerHTML = threshold.h + " mm";
+				document.getElementById("thresRot").innerHTML = parseInt(threshold.r) + " degrees";
+			});
+			// import time series for demo
+			var seriesPath = "data/aquarium/" + vis["400"].Children["450"].Children["452"].Path.MeasuredStates[0].TimeSeries;
+			new THREE.FileLoader().load(seriesPath, function (contents) {
+				demoData = JSON.parse(contents);
+				readFind = new readingFinder(demoData);
+			});
+		}
+
+		// GLTF alternative
+		function search3D(element) {
+			if (typeof element.Children === "undefined") {
+				for (let i = 0; i < element.Path.Asset.length; i++) {
+					new THREE.FileLoader().load("data/aquarium/" + element.Path.Asset, function (contents) {
+						let assetPackage = JSON.parse(contents).Package;
+						if (typeof assetPackage.Topology !== "undefined") {
+							let data3D = "data/aquarium/3D/" + assetPackage.Topology.Visualization.GLB;
+							let loader = new THREE.GLTFLoader();
+							loader.load(data3D, function (gltf) {
+								var asset3D = gltf.scene;
+								asset3D.children[0].geometry.rotateX(Math.PI / 2);
+								asset3D.position.x = assetPackage.Topology.Position.x - 1000 * cg / 2;
+								asset3D.position.y = assetPackage.Topology.Position.y;
+								asset3D.position.z = assetPackage.Topology.Position.z - 1000 * draft;
+								boat3D.add(asset3D);
+								// var axisHelper = new THREE.AxisHelper( 5 );
+								// boat3D.add(axisHelper);
+								// this shows an object with gltf content and metadata
+								// console.log(gltf);
+							});
+						}
+					});
+				}
+			} else {
+				for (let prop in element.Children) {
+					search3D(element.Children[prop]);
+				}
+			}
+		}
+
+		// STL alternative
+		// function search3D(element) {
+		// 	if (typeof element.Children === "undefined") {
+		// 		for (let i = 0; i < element.Path.Asset.length; i++) {
+		// 			new THREE.FileLoader().load("data/aquarium/" + element.Path.Asset, function (contents) {
+		// 				let assetPackage = JSON.parse(contents).Package;
+		// 				if (typeof assetPackage.Topology !== "undefined") {
+		// 					let data3D = "data/aquarium/3D/" + assetPackage.Topology.Visualization.STL;
+		// 					let loader = new THREE.STLLoader();
+		// 					loader.load(data3D, function (stl) {
+		// 						var material = new THREE.MeshPhongMaterial({ color: 0x0384fc, specular: 0x111111, shininess: 200 });
+		// 						material.side = 1;
+		// 						var asset3D = new THREE.Mesh(stl, material);
+		// 						asset3D.position.x = assetPackage.Topology.Position.x - 1000 * loa / 2;
+		// 						asset3D.position.y = assetPackage.Topology.Position.y;
+		// 						asset3D.position.z = assetPackage.Topology.Position.z  - 1000 * draft;
+		// 						asset3D.castShadow = true;
+		// 						asset3D.receiveShadow = true;
+		// 						boat3D.add(asset3D);
+		// 					});
+		// 				}
+		// 			});
+		// 		}
+		// 	} else {
+		// 		for (let i = 0; i < element.Children.length; i++) {
+		// 			search3D(element.Children[i]);
+		// 		}
+		// 	}
+		// }
+
+		// sync visualization with video in demo mode
+		function readingFinder(demoData) {
+			this.numReadings = demoData.Package.TimeSeriesData[0].TabularData[0].DataSet.length;
+			this.startTime = Date.parse(demoData.Package.TimeSeriesData[0].TabularData[0].DataSet[0].TimeStamp);
+			this.finishTime = Date.parse(demoData.Package.TimeSeriesData[0].TabularData[0].DataSet[this.numReadings - 1].TimeStamp);
+			this.demoDuration = this.finishTime - this.startTime;
+			this.marker = 0;
+			this.completedLoops = 0;
+			this.findReading = function (elapsedLoopTime) {
+				var markerTime = Date.parse(demoData.Package.TimeSeriesData[0].TabularData[0].DataSet[this.marker].TimeStamp);
+				if (markerTime - this.startTime > elapsedLoopTime) {
+					this.completedLoops++;
+					this.marker = 0;
+				}
+				if (this.marker < this.numReadings - 1) {
+					// we are not on the last frame, so we can continue towards the following readings
+					var nextMarkerTime = Date.parse(demoData.Package.TimeSeriesData[0].TabularData[0].DataSet[this.marker + 1].TimeStamp);
+					while (nextMarkerTime - this.startTime < elapsedLoopTime) {
+						this.marker++;
+						if (this.marker < this.numReadings - 1) {
+							// the new marker is not the last, there is still a next marker
+							nextMarkerTime = Date.parse(demoData.Package.TimeSeriesData[0].TabularData[0].DataSet[this.marker + 1].TimeStamp);
+						}
+					}
+				}
+				return demoData.Package.TimeSeriesData[0].TabularData[0].DataSet[this.marker].Value;
+			}
+		};
+
+		//Ready renderer and scene
+		(function () {
+			renderer = new THREE.WebGLRenderer({
+				antialias: true
+			});
+			renderer.setPixelRatio(window.devicePixelRatio);
+			renderer.setClearColor("white", 1);
+
+			// get the div that will hold the renderer
+			container = document.getElementById("3d");
+			// add the renderer to the div
+			container.appendChild(renderer.domElement);
+
+			//Scene setup:
+			scene = new THREE.Scene();
+			let sun = new THREE.DirectionalLight(0xffffff, 2);
+			sun.position.set(512, -246, 128);
+			scene.add(sun);
+
+			//Ocean size: aquarium is circa 400 mm on its longer dimension and 200 mm on the shorter
+			let length = 200;
+			let width = 400;
+			var aqGeom = new THREE.BoxBufferGeometry(width, length, length);
+			var aqMaterial = new THREE.MeshBasicMaterial({
+				color: 0xA9CCE3,
+				side: THREE.BackSide
+				/*,
+				depthWrite: false*/
+			});
+			var aquarium = new THREE.Mesh(aqGeom, aqMaterial);
+			scene.add(aquarium);
+
+			zUpCont = new THREE.Group();
+			scene.add(zUpCont);
+
+			//Camera and controls:
+			camera = new THREE.PerspectiveCamera(26, window.innerWidth / window.innerHeight, 1, 1000000);
+			camera.up.set(0, 1, 0);
+			controls = new THREE.OrbitControls(camera, renderer.domElement);
+
+			camera.position.set(0, 0, 840);
+			controls.target = new THREE.Vector3(0, 0, 0);
+			camera.lookAt(zUpCont.position);
+			controls.update();
+
+			zUpCont.add(new THREE.HemisphereLight(0xccccff, 0x666688, 1));
+
+			ocean = new Ocean({
+				sunDir: sun.position.clone().normalize(),
+				size: width,
+				length: length,
+				width: width,
+				segments: 127,
+			});
+			zUpCont.add(ocean);
+			scene.rotation.x = -Math.PI / 2;
+
+			// respond to window resize:
+			function onResize() {
+				renderer.setSize(container.clientWidth, container.clientHeight);
+				camera.aspect = container.clientWidth / container.clientHeight;
+				camera.updateProjectionMatrix();
+			}
+			window.addEventListener("resize", onResize);
+			onResize(); // ensure the initial setup is good too
+		})();
+
+		// GLTF exporter only for reference
+		/*function exportGLTF(input) {
+			var gltfExporter = new THREE.GLTFExporter();
+	
+			var options = {
+				trs: false,
+				onlyVisible: true,
+				truncateDrawRange: true,
+				binary: true,
+				embedImages: true,
+				forceIndices: false,
+				forcePowerOfTwoTextures: false,
+				maxTextureSize: Infinity // to prevent NaN value
+			};
+	
+			gltfExporter.parse(input, function (result) {
+				if (result instanceof ArrayBuffer) {
+					saveArrayBuffer(result, "scene.glb");
+				} else {
+					var output = JSON.stringify(result, null, 2);
+					save(new Blob([output], {
+						type: "text/plain"
+					}), "scene.gltf");
+				}
+			}, options);
+		}
+	
+		var link = document.createElement("a");
+		link.style.display = "none";
+		document.body.appendChild(link); // Firefox workaround, see #6594
+	
+		function saveArrayBuffer(buffer, filename) {
+			save(new Blob([buffer], {
+				type: "application/octet-stream"
+			}), filename);
+		}
+	
+		function save(blob, filename) {
+			link.href = URL.createObjectURL(blob);
+			link.download = filename;
+			link.click();
+			// URL.revokeObjectURL( url ); breaks Firefox...
+		}*/
+
+		// motion tracking could be used to estimate velocity
+		/*var initX = [1, 0]; // X = [initial position in m, initial velocity in m/s]
+		var tprev = 0;
+		var posX = initX;*/
+
+		controls.update();
+		var clock = new THREE.Clock();
+		var aniMode = "still";
+		animate();
+		function animate() {
+			if (aniMode === "still") {
+				// animate a still scene
+				ocean.update(0);
+			} else if (aniMode === "capture") {
+				// animate a scene from captured video
+				var time = clock.getElapsedTime();
+				ocean.update(time);
+			} else if (aniMode === "demo") {
+				// animate a scene from stored data
+				var elapsedLoopTime = document.getElementById("videoInput").currentTime;
+				ocean.update(elapsedLoopTime);
+				var framePos = readFind.findReading(1000 * elapsedLoopTime);
+				boat3D.position.x = 1000 * framePos[0];
+				boat3D.position.z = 1000 * framePos[1];
+				boat3D.rotation.y = framePos[2];
+				checkThreshold(boat3D.position.x, boat3D.position.z, 180 / Math.PI * parseFloat(boat3D.rotation.y));
+			}
+			ocean.water.render();
+			requestAnimationFrame(animate);
+			renderer.render(scene, camera);
+		}
+
+		let utils = new Utils("errorMessage");
+		let streaming = false;
+		let videoInput = document.getElementById("videoInput");
+		document.getElementById("videoInput").style.display = "none";
+		let startAndStop = document.getElementById("startAndStop");
+		let canvasOutput = document.getElementById("canvasOutput");
+		let canvasContext = canvasOutput.getContext("2d");
+
+		let appMode = document.getElementById("appMode");
+		appMode.addEventListener("change", changeMode);
+		function changeMode() {
+			if (appMode.value === "demo") {
+				videoInput.src = "data/aquarium/demo.mp4";
+			} else if (appMode.value === "stream") {
+				videoInput.src = "http://10.24.90.120:8081";
+				videoInput.crossOrigin = "Anonymous";
+			}
+		}
+
+		startAndStop.addEventListener("click", () => {
+			if (!streaming) {
+				appMode.disabled = true;
+				utils.clearError();
+				TabularData.DataSet = [];
+				switch (appMode.value) {
+					case "demo":
+						videoInput.play().then(() => {
+							onDemoStarted();
+						});
+						break;
+					case "capture":
+						utils.startCamera("vga", onVideoStarted, "videoInput");
+						break;
+					case "stream":
+						videoInput.play().then(() => {
+							onVideoStarted();
+						});
+						break;
+				}
+				startGraph1();
+				startGraph2();
+			} else {
+				if (appMode.value === "capture") {
+					utils.stopCamera();
+				} else {
+					videoInput.pause();
+					videoInput.currentTime = 0;
+				}
+				onVideoStopped();
+				aniMode = "still";
+				stopGraph1();
+				stopGraph2();
+				appMode.disabled = false;
+			}
+		});
+
+		function onVideoStarted() {
+			streaming = true;
+			aniMode = "capture";
+			startAndStop.innerText = "Stop";
+
+			videoInput.width = videoInput.videoWidth;
+			videoInput.height = videoInput.videoHeight;
+
+			let video = document.getElementById("videoInput");
+			let cap = new cv.VideoCapture(video);
+
+			// take first frame of the video
+			let frame = new cv.Mat(video.height, video.width, cv.CV_8UC4);
+			cap.read(frame);
+
+			// hardcode the initial location of window
+			let trackWindow = new cv.Rect(150, 120, 200, 200);
+
+			// set up the ROI for tracking
+			let roi = frame.roi(trackWindow);
+			let hsvRoi = new cv.Mat();
+			cv.cvtColor(roi, hsvRoi, cv.COLOR_RGBA2RGB);
+			cv.cvtColor(hsvRoi, hsvRoi, cv.COLOR_RGB2HSV);
+			let mask = new cv.Mat();
+			let lowScalar = new cv.Scalar(30, 30, 0);
+			let highScalar = new cv.Scalar(180, 180, 180);
+			let low = new cv.Mat(hsvRoi.rows, hsvRoi.cols, hsvRoi.type(), lowScalar);
+			let high = new cv.Mat(hsvRoi.rows, hsvRoi.cols, hsvRoi.type(), highScalar);
+			cv.inRange(hsvRoi, low, high, mask);
+			let roiHist = new cv.Mat();
+			let hsvRoiVec = new cv.MatVector();
+			hsvRoiVec.push_back(hsvRoi);
+			cv.calcHist(hsvRoiVec, [0], mask, roiHist, [180], [0, 180]);
+			cv.normalize(roiHist, roiHist, 0, 255, cv.NORM_MINMAX);
+
+			// delete useless mats.
+			roi.delete();
+			hsvRoi.delete();
+			mask.delete();
+			low.delete();
+			high.delete();
+			hsvRoiVec.delete();
+
+			// Setup the termination criteria, either 10 iteration or move by atleast 1 pt
+			let termCrit = new cv.TermCriteria(cv.TERM_CRITERIA_EPS | cv.TERM_CRITERIA_COUNT, 10, 1);
+
+			let hsv = new cv.Mat(video.height, video.width, cv.CV_8UC3);
+			let hsvVec = new cv.MatVector();
+			hsvVec.push_back(hsv);
+			let dst = new cv.Mat();
+			let trackBox = null;
+
+			const FPS = 30;
+
+			function processVideo() {
+				try {
+					if (!streaming) {
+						// clean and stop.
+						frame.delete();
+						dst.delete();
+						hsvVec.delete();
+						roiHist.delete();
+						hsv.delete();
+						return;
+					}
+					let begin = Date.now();
+
+					// start processing.
+					cap.read(frame);
+					cv.cvtColor(frame, hsv, cv.COLOR_RGBA2RGB);
+					cv.cvtColor(hsv, hsv, cv.COLOR_RGB2HSV);
+					cv.calcBackProject(hsvVec, [0], roiHist, dst, [0, 180], 1);
+
+					// apply camshift to get the new location
+					[trackBox, trackWindow] = cv.CamShift(dst, trackWindow, termCrit);
+
+					// Draw it on image
+					let pts = cv.rotatedRectPoints(trackBox);
+					cv.line(frame, pts[0], pts[1], [255, 0, 0, 255], 3);
+					cv.line(frame, pts[1], pts[2], [255, 0, 0, 255], 3);
+					cv.line(frame, pts[2], pts[3], [255, 0, 0, 255], 3);
+					cv.line(frame, pts[3], pts[0], [255, 0, 0, 255], 3);
+					cv.imshow("canvasOutput", frame);
+
+					// locate object center
+					xCenter = (trackBox.center.x /*  + w/2 */) - resolution.w / 2;
+					zCenter = -(trackBox.center.y /*  + h/2 */) + resolution.h / 2;
+					rotDeg = trackBox.angle - 90;
+					boat3D.position.x = xCenter * distance.w / resolution.w;
+					boat3D.position.z = zCenter * distance.h / resolution.h;
+					boat3D.rotation.y = Math.PI / 180 * rotDeg;
+
+					checkThreshold(boat3D.position.x, boat3D.position.z, rotDeg);
+
+					let surgeMeters = boat3D.position.x / 1000;
+					let heaveMeters = boat3D.position.z / 1000;
+
+					// Insert the results in the object @ferrari212
+					let date = new Date(begin).toISOString();
+					TabularData.DataSet.push({
+						"TimeStamp": date,
+						"Value": [
+							surgeMeters.toString(),
+							heaveMeters.toString(),
+							boat3D.rotation.y.toString()
+						]
+					});
+
+					// schedule the next one
+					let delay = 1000 / FPS - (Date.now() - begin);
+					setTimeout(processVideo, delay);
+				} catch (err) {
+					utils.printError(err);
+				}
+			};
+
+			// schedule the first one
+			switch (appMode.value) {
+				case "capture":
+					setTimeout(processVideo, 0);
+					break;
+				case "stream":
+					setTimeout(processVideo, 3000);
+					break;
+			};
+		};
+
+		function onDemoStarted() {
+			streaming = true;
+			startAndStop.innerText = "Stop";
+			readFind.marker = 0;
+			readFind.completedLoops = 0;
+			aniMode = "demo";
+
+			videoInput.width = videoInput.videoWidth;
+			videoInput.height = videoInput.videoHeight;
+
+			let video = document.getElementById("videoInput");
+			let cap = new cv.VideoCapture(video);
+
+			// take first frame of the video
+			let frame = new cv.Mat(video.height, video.width, cv.CV_8UC4);
+			cap.read(frame);
+
+			const FPS = 30;
+
+			function replayVideo() {
+				try {
+					if (!streaming) {
+						// clean and stop.
+						frame.delete();
+						return;
+					}
+					let begin = Date.now();
+
+					// start processing.
+					cap.read(frame);
+					cv.imshow("canvasOutput", frame);
+
+					// schedule the next one.
+					let delay = 1000 / FPS - (Date.now() - begin);
+					setTimeout(replayVideo, delay);
+				} catch (err) {
+					utils.printError(err);
+				}
+			};
+			// schedule the first one.
+			setTimeout(replayVideo, 0);
+		};
+
+		function onVideoStopped() {
+			streaming = false;
+			canvasContext.clearRect(0, 0, canvasOutput.width, canvasOutput.height);
+			startAndStop.innerText = "Start";
+		};
+
+		utils.loadOpenCv(() => {
+			startAndStop.disabled = false;
+		});
+
+		function checkThreshold(refX, refZ, refRot) {
+			document.getElementById("warning").innerHTML = "";
+			if (refX < -threshold.w || threshold.w < refX) {
+				document.getElementById("warning").innerHTML += "Surge position is " + refX.toFixed(2) + " mm.<br>";
+			}
+			if (refZ < -threshold.h || threshold.h < refZ) {
+				document.getElementById("warning").innerHTML += "Heave position is " + refZ.toFixed(2) + " mm.<br>";
+			}
+			if (refRot < -threshold.r || threshold.r < refRot) {
+				document.getElementById("warning").innerHTML += "Pitch rotation is " + refRot.toFixed(2) + " degrees.<br>";
+			}
+		};
+
+		// surge and heave plots
+		function feedMovPlot1(callback) {
+			var tick = {};
+			tick.plot0 = +boat3D.position.x.toFixed(2);
+			tick.plot1 = +boat3D.position.z.toFixed(2);
+			callback(JSON.stringify(tick));
+		};
+
+		function feedMovPlot2(callback) {
+			var tick = {};
+			tick.plot0 = +(180 / Math.PI * boat3D.rotation.y).toFixed(2);
+			callback(JSON.stringify(tick));
+		};
+
+		function clearGraph1() {
+			zingchart.exec("plotBoatMov1", "clearfeed")
+		};
+		function startGraph1() {
+			zingchart.exec("plotBoatMov1", "startfeed");
+		};
+		function stopGraph1() {
+			zingchart.exec("plotBoatMov1", "stopfeed");
+		};
+
+		function clearGraph2() {
+			zingchart.exec("plotBoatMov2", "clearfeed")
+		};
+		function startGraph2() {
+			zingchart.exec("plotBoatMov2", "startfeed");
+		};
+		function stopGraph2() {
+			zingchart.exec("plotBoatMov2", "stopfeed");
+		};
+
+		var movChart1 = {
+			type: "line",
+			height: "100%",
+			width: "100%",
+			x: "0%",
+			y: "0%",
+			plot: {
+				aspect: "spline",
+				marker: {
+					visible: true
+				},
+			},
+			series: [{
+				values: [0],
+				text: "Surge (mm)"
+			}, {
+				values: [0],
+				text: "Heave (mm)"
+			}],
+			refresh: {
+				type: "feed",
+				transport: "js",
+				url: "feedMovPlot1()",
+				method: "pull",
+				interval: 50,
+				"adjust-scale": true
+			},
+			plotarea: {
+				margin: "5% 5% 20% 5%",
+			},
+			legend: {
+				layout: "float",
+				"background-color": "none",
+				"border-width": 0,
+				"text-align": "middle",
+				offsetY: 0,
+				align: "center",
+				item: {
+					"font-size": "10px"
+				}
+			}
+		};
+
+		var movChart2 = {
+			type: "line",
+			height: "100%",
+			width: "100%",
+			x: "0%",
+			y: "0%",
+			plot: {
+				aspect: "spline",
+				marker: {
+					visible: true
+				},
+			},
+			series: [{
+				"values": [0],
+				"text": "Pitch (deg)"
+			}],
+			refresh: {
+				type: "feed",
+				transport: "js",
+				url: "feedMovPlot2()",
+				method: "pull",
+				interval: 50,
+				"adjust-scale": true
+			},
+			plotarea: {
+				margin: "5% 5% 20% 5%",
+			},
+			legend: {
+				layout: "float",
+				"background-color": "none",
+				"border-width": 0,
+				"text-align": "middle",
+				offsetY: 0,
+				align: "center",
+				item: {
+					"font-size": "10px"
+				}
+			}
+		};
+
+		window.onload = function () {
+			zingchart.render({
+				id: "plotBoatMov1",
+				height: "100%",
+				width: "100%",
+				data: movChart1,
+				events: {
+					load: function (p) {
+						stopGraph1()
+					}
+				}
+			});
+			zingchart.render({
+				id: "plotBoatMov2",
+				height: "100%",
+				width: "100%",
+				data: movChart2,
+				events: {
+					load: function (p) {
+						stopGraph2();
+					}
+				}
+			});
+		};
+	</script>
+</body>
+
+</html>
